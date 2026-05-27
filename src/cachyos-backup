@@ -17,7 +17,7 @@ VERBOSE=0
 # Logger wrapper helpers
 log_info() {
     local msg="$1"
-    if [ "$VERBOSE" -eq 1 ]; then
+    if [ "${VERBOSE:-0}" -eq 1 ]; then
         echo "INFO: $msg"
     fi
     if command -v logger >/dev/null 2>&1; then
@@ -27,7 +27,7 @@ log_info() {
 
 log_warn() {
     local msg="$1"
-    if [ "$VERBOSE" -eq 1 ]; then
+    if [ "${VERBOSE:-0}" -eq 1 ]; then
         echo "WARN: $msg" >&2
     fi
     if command -v logger >/dev/null 2>&1; then
@@ -42,6 +42,18 @@ log_error() {
         logger -p user.err -t cachyos-backup "$msg" || true
     fi
 }
+
+# If running as root and SUDO_USER is set and not root, re-run as the original user.
+# If running as root and SUDO_USER is NOT set, warn and exit 0 to avoid blocking pacman transactions.
+if [ "$(id -u)" -eq 0 ]; then
+    if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != "root" ]; then
+        log_info "Running as root under sudo. Re-executing as user '$SUDO_USER'..."
+        exec sudo -u "$SUDO_USER" "$0" "$@"
+    else
+        log_warn "Running as root but SUDO_USER is not set. Skipping backup to avoid system-wide config conflicts."
+        exit 0
+    fi
+fi
 
 load_config() {
     if [ -f "$CONFIG_FILE" ]; then

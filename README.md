@@ -1,6 +1,6 @@
 # CachyOS Package Backup and Recovery System
 
-Welcome! This system helps you automatically back up your installed packages, application lists, and system dotfiles (configurations) on CachyOS, and restore them quickly if you ever need to install fresh CachyOS.
+Welcome! This system helps you automatically back up your installed packages, application lists, and system dotfiles (configurations) on Arch Linux, and restore them quickly if you ever need to install fresh system.
 
 ---
 
@@ -20,6 +20,7 @@ Welcome! This system helps you automatically back up your installed packages, ap
   - [Command Flags for Advanced Recovery](#command-flags-for-advanced-recovery)
   - [How to back up KDE Plasma settings?](#how-to-back-up-kde-plasma-settings)
   - [How to Uninstall](#how-to-uninstall)
+- [arch-backup](#arch-backup)
 
 ---
 

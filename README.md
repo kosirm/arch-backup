@@ -3,7 +3,9 @@
 Welcome! This system helps you automatically back up your installed packages, application lists, and system dotfiles (configurations) on Arch Linux, and restore them quickly if you ever need to install fresh system. Program can be used either commandline or with a GUI.
 To install GUI on arch linux:
 
-
+   ```bash
+   yay -S arch-backup-tool-git
+   ```
 
 ---
 

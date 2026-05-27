@@ -1,5 +1,5 @@
 [Desktop Entry]
-Name=Arch Package Backup & Recovery
+Name=Package Backup & Recovery
 Comment=Backup package baselines, configuration dotfiles, and desktop profiles
 Exec=arch-backup-tool
 Icon=system-software-update

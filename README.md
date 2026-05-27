@@ -1,7 +1,7 @@
-# Arch Package Backup and Recovery System
+# Package Backup and Recovery System
 
-Welcome! This system helps you automatically back up your installed packages, application lists, and system dotfiles (configurations) on Arch Linux, and restore them quickly if you ever need to install fresh system. Program can be used either commandline or with a GUI.
-To install GUI on arch linux:
+Welcome! This system helps you automatically back up your installed packages, application lists, and system dotfiles (configurations) on any Arch-based Linux (even if it was primarily intended for my CachyOS), and restore them quickly if you ever need to install fresh system. Program can be used either commandline or with a GUI.
+To install GUI on Arch Linux:
 
    ```bash
    yay -S arch-backup-tool-git
@@ -10,9 +10,11 @@ To install GUI on arch linux:
 ---
 
 ## Table of Contents
-- [Arch Package Backup and Recovery System](#arch-package-backup-and-recovery-system)
+- [Package Backup and Recovery System](#package-backup-and-recovery-system)
   - [Table of Contents](#table-of-contents)
   - [How to Install](#how-to-install)
+    - [Option A: From the AUR (Recommended)](#option-a-from-the-aur-recommended)
+    - [Option B: Manual Installation (From Source)](#option-b-manual-installation-from-source)
   - [Step 1: Set Up Your GitHub Repository](#step-1-set-up-your-github-repository)
   - [Step 2: Initialize and Start Backups](#step-2-initialize-and-start-backups)
   - [How to initialize on old system (many apps installed)](#how-to-initialize-on-old-system-many-apps-installed)
@@ -22,8 +24,12 @@ To install GUI on arch linux:
   - [If you DO NOT want to use it with Chezmoi:](#if-you-do-not-want-to-use-it-with-chezmoi)
   - [Key Settings to Know:](#key-settings-to-know)
   - [How to Recover Everything on a New System](#how-to-recover-everything-on-a-new-system)
+    - [Option A: Via the AUR (Recommended)](#option-a-via-the-aur-recommended)
+    - [Option B: Directly from GitHub (Without installing first)](#option-b-directly-from-github-without-installing-first)
   - [Command Flags for Advanced Recovery](#command-flags-for-advanced-recovery)
   - [How to back up KDE Plasma settings?](#how-to-back-up-kde-plasma-settings)
+    - [Automated Backup (Easiest)](#automated-backup-easiest)
+    - [Manual Command-Line Backup (Alternative)](#manual-command-line-backup-alternative)
   - [How to Uninstall](#how-to-uninstall)
 
 ---

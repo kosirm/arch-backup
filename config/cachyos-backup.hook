@@ -6,7 +6,7 @@ Type = Package
 Target = *
 
 [Action]
-Description = Arch Package Backup (PostTransaction)
+Description = Package Backup (PostTransaction)
 When = PostTransaction
 Exec = /usr/local/bin/cachyos-backup --backup
 Depends = bash

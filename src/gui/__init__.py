@@ -1,1 +1,1 @@
-# Arch Package Backup GUI package
+# Package Backup GUI package

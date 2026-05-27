@@ -336,7 +336,7 @@ QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Arch Package Backup & Recovery")
+        self.setWindowTitle("Package Backup & Recovery")
         self.resize(850, 680)
 
         # Set default window icon if available

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Arch Package Backup Tool
+# Package Backup Tool
 set -euo pipefail
 
 # Configuration file path
@@ -543,7 +543,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
             capture_baseline
             ;;
         backup)
-            log_info "Arch Package Backup: Starting backup..."
+            log_info "Package Backup: Starting backup..."
             load_config
             validate_config
             compute_diff
@@ -557,16 +557,16 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
             if [ -f "${BACKUP_REPO}/user-foreign.txt" ]; then
                 foreign_count=$(grep -c '^' "${BACKUP_REPO}/user-foreign.txt" || true)
             fi
-            log_info "Arch Package Backup: Completed. Tracked official: $official_count, foreign: $foreign_count. Git push succeeded."
+            log_info "Package Backup: Completed. Tracked official: $official_count, foreign: $foreign_count. Git push succeeded."
             ;;
         extras)
-            log_info "Arch Package Backup: Starting extras backup..."
+            log_info "Package Backup: Starting extras backup..."
             load_config
             validate_config
             track_extras
             sync_konsave
             git_commit_push
-            log_info "Arch Package Backup: Extras backup completed. Managers tracked: $EXTRAS_TRACKED. Git push succeeded."
+            log_info "Package Backup: Extras backup completed. Managers tracked: $EXTRAS_TRACKED. Git push succeeded."
             ;;
         help|"")
             show_help

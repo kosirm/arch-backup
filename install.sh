@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Installation script for Arch Package Backup and Recovery System
+# Installation script for Package Backup and Recovery System
 set -euo pipefail
 
 DESTDIR="${DESTDIR:-}"

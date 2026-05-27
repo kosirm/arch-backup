@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Uninstallation script for Arch Package Backup and Recovery System
+# Uninstallation script for Package Backup and Recovery System
 set -euo pipefail
 
 DESTDIR="${DESTDIR:-}"

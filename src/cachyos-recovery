@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Arch Package Recovery Tool
+# Package Recovery Tool
 set -euo pipefail
 
 # Default values

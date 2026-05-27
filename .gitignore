@@ -7,3 +7,4 @@ __pycache__/
 /pkgdir/
 arch-backup-tool-git-*.pkg.tar.zst
 /arch-backup-tool-git/
+/arch-backup/

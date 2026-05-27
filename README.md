@@ -30,20 +30,27 @@ To install GUI on arch linux:
 
 ## How to Install
 
-To install the backup tools, hooks, and daily automation services on your current system:
+### Option A: From the AUR (Recommended)
+If you are on Arch Linux or CachyOS, you can install the package directly from the AUR using an AUR helper like `yay` or `paru`:
+```bash
+yay -S arch-backup-tool-git
+```
 
+### Option B: Manual Installation (From Source)
+If you prefer to install manually from source:
 1. Open your terminal.
-2. Navigate to directory where you downloaded/cloned this repo:
+2. Clone this repository and navigate to it:
    ```bash
-   cd /<download-location>/cachyos-package-backup
+   git clone https://github.com/kosirm/arch-backup.git
+   cd arch-backup
    ```
-3. If repo was downloaded, first make both files executable, then run the installation script with administrator (`sudo`) privileges:
+3. Run the installation script with administrator (`sudo`) privileges:
    ```bash
    chmod +x install.sh uninstall.sh
    sudo ./install.sh
    ```
 
-*What this does:* This installs two commands on your system: `cachyos-backup` and `cachyos-recovery`. It also sets up a hook that runs when packages change, and a daily timer to back up extra applications.
+*What this does:* This installs the system command-line utilities (`cachyos-backup` and `cachyos-recovery`), the Pacman hook for automated changes tracking, and the daily backup automation timers.
 
 ---
 
@@ -170,23 +177,27 @@ chezmoi add ~/.bashrc
 
 ## How to Recover Everything on a New System
 
-If you are on a completely new system (or just reinstalled CachyOS) and want to recover all your packages and settings:
+If you are on a completely new system (or just reinstalled your OS) and want to recover all your packages, configurations, and settings:
 
-1. Install `git` if it isn't already installed:
+### Option A: Via the AUR (Recommended)
+1. Install the tool from the AUR:
    ```bash
-   sudo pacman -S --needed git
+   yay -S arch-backup-tool-git
    ```
-2. Clone your backup repository from GitHub to your new home folder:
+2. Run the recovery tool using your backup GitHub URL:
    ```bash
-   git clone https://github.com/your-username/cachyos-backup.git ~/cachyos-backup
+   cachyos-recovery --repo https://github.com/your-username/my-cachyos-backup.git
    ```
-3. Download the recovery script directly from your local repository copy:
+
+### Option B: Directly from GitHub (Without installing first)
+1. Download the recovery script from this repository:
    ```bash
-   # Make the recovery script executable and run it!
-   chmod +x ~/cachyos-backup/cachyos-recovery
-   
-   # Run the recovery tool
-   ~/cachyos-backup/cachyos-recovery --local ~/cachyos-backup
+   curl -sSfL https://raw.githubusercontent.com/kosirm/arch-backup/main/src/cachyos-recovery -o cachyos-recovery
+   chmod +x cachyos-recovery
+   ```
+2. Run the recovery tool to clone and restore everything:
+   ```bash
+   ./cachyos-recovery --repo https://github.com/your-username/my-cachyos-backup.git
    ```
 ---
 
@@ -207,34 +218,43 @@ Once the recovery completes, it will print a friendly summary showing exactly ho
 
 ## How to back up KDE Plasma settings?
 
-- **KDE Plasma** is beautiful, but it scatters its settings across multiple configuration files.
+### Automated Backup (Easiest)
+If **Use Konsave** is enabled in Settings (or configured in `~/.config/cachyos-backup/config`), the background daily timer (or the **Execute Daily Backup Routine Instantly** button in Settings) will automatically:
+1. Capture your active KDE Plasma configurations to a profile named `cachyos-kde-profile`.
+2. Compute a directory hash to check if configurations have changed.
+3. Export the profile to `cachyos-kde-profile.knsv` inside your backup repository and push it to GitHub if changes are detected.
 
-**The "Konsave" Way** (Easiest & Cleanest):
+During restoration, `cachyos-recovery` will automatically import the profile. You can then apply it using:
+```bash
+konsave -a cachyos-kde-profile
+```
+
+### Manual Command-Line Backup (Alternative)
+If you want to manage desktop settings profiles manually:
  1. Install Konsave:
     ```bash
     sudo pacman -S konsave
     ```
- 2. Save your current setup as a profile (let's name it my-kde-setup)
+ 2. Save your current setup as a profile (e.g. `my-kde-setup`):
     ```bash
     konsave -s my-kde-setup
     ```
- 3. Export the profile to a single small archive file:
+ 3. Export the profile to a single archive file:
     ```bash
     konsave -e my-kde-setup
     ```
-    *(This creates a .knsv file in your home directory, e.g. ~/my-kde-setup.knsv, which is only a few megabytes).*
-
- 4. Add the exported file to Chezmoi:
+    *(This creates a `.knsv` file in your home directory, e.g. `~/my-kde-setup.knsv`).*
+ 4. Add the exported file to Chezmoi so it is tracked:
     ```bash
     chezmoi add ~/my-kde-setup.knsv
     ```
 
-**On a fresh system**, after recovery restores the .knsv file, you would simply run:
-  ```bash
-  konsave -i ~/my-kde-setup.knsv
-  konsave -a my-kde-setup
-  ```
-This instantly restores all your wallpapers, widgets, panels, and shortcuts at once!
+**On a fresh system**, after restoring, apply the profile manually using:
+```bash
+konsave -i ~/my-kde-setup.knsv
+konsave -a my-kde-setup
+```
+This restores all your wallpapers, widgets, panels, and shortcuts at once!
 
 ---
 

@@ -7,7 +7,7 @@ from PyQt6.QtWidgets import (
     QMessageBox, QTextBrowser, QTabWidget, QSplitter, QCheckBox,
     QComboBox, QTimeEdit
 )
-from PyQt6.QtCore import pyqtSignal, Qt, QProcess, QTime
+from PyQt6.QtCore import pyqtSignal, Qt, QProcess, QTime, QDir
 from PyQt6.QtGui import QFont, QColor
 
 from .utils import load_gui_config, save_gui_config, resolve_script_path, CONFIG_PATH
@@ -442,22 +442,29 @@ class ChezmoiTab(QWidget):
         self.load_dotfiles()
 
     def browse_and_add(self):
-        file_path, _ = QFileDialog.getOpenFileName(
-            self, "Select Dotfile to Track", os.path.expanduser("~"), "All Files (*)"
-        )
-        if file_path:
-            # Verify file is in user home directory
-            home = os.path.expanduser("~")
-            if not file_path.startswith(home):
-                QMessageBox.warning(self, "Invalid Path", "Chezmoi can only track files inside your user home directory.")
-                return
+        dialog = QFileDialog(self)
+        dialog.setWindowTitle("Select Dotfile to Track")
+        dialog.setDirectory(os.path.expanduser("~"))
+        dialog.setFileMode(QFileDialog.FileMode.ExistingFile)
+        dialog.setFilter(QDir.Filter.AllEntries | QDir.Filter.Hidden)
+        dialog.setOption(QFileDialog.Option.DontUseNativeDialog, True)
+        
+        if dialog.exec():
+            selected_files = dialog.selectedFiles()
+            if selected_files:
+                file_path = selected_files[0]
+                # Verify file is in user home directory
+                home = os.path.expanduser("~")
+                if not file_path.startswith(home):
+                    QMessageBox.warning(self, "Invalid Path", "Chezmoi can only track files inside your user home directory.")
+                    return
 
-            self.list_widget.setEnabled(False)
-            self.footer.setText(f"Adding {os.path.basename(file_path)} to chezmoi...")
-            
-            self.proc = QProcess()
-            self.proc.start("chezmoi", ["add", "--force", file_path])
-            self.proc.finished.connect(self.on_chezmoi_action_finished)
+                self.list_widget.setEnabled(False)
+                self.footer.setText(f"Adding {os.path.basename(file_path)} to chezmoi...")
+                
+                self.proc = QProcess()
+                self.proc.start("chezmoi", ["add", "--force", file_path])
+                self.proc.finished.connect(self.on_chezmoi_action_finished)
 
 
 class SettingsTab(QWidget):

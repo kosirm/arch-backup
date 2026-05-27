@@ -32,6 +32,7 @@ fi
 # 3. Create necessary directories
 mkdir -p "$DESTDIR$PREFIX/bin"
 mkdir -p "$DESTDIR$PREFIX/share/arch-backup-tool/gui"
+mkdir -p "$DESTDIR$PREFIX/share/applications"
 mkdir -p "$DESTDIR/etc/pacman.d/hooks"
 
 # Determine systemd unit folder based on prefix
@@ -59,6 +60,10 @@ cp src/gui/wizard.py "$DESTDIR$PREFIX/share/arch-backup-tool/gui/wizard.py"
 cp src/gui/dashboard.py "$DESTDIR$PREFIX/share/arch-backup-tool/gui/dashboard.py"
 cp src/gui/utils.py "$DESTDIR$PREFIX/share/arch-backup-tool/gui/utils.py"
 chmod 644 "$DESTDIR$PREFIX/share/arch-backup-tool/gui/"*.py
+
+echo "Installing Desktop entry launcher..."
+cp config/arch-backup-tool.desktop "$DESTDIR$PREFIX/share/applications/arch-backup-tool.desktop"
+chmod 644 "$DESTDIR$PREFIX/share/applications/arch-backup-tool.desktop"
 
 echo "Installing Pacman hook..."
 sed "s|/usr/local/bin|$PREFIX/bin|g" config/cachyos-backup.hook > "$DESTDIR/etc/pacman.d/hooks/cachyos-backup.hook"

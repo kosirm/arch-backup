@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=Arch Package Backup & Recovery
+Comment=Backup package baselines, configuration dotfiles, and desktop profiles
+Exec=arch-backup-tool
+Icon=system-software-update
+Terminal=false
+Type=Application
+Categories=System;Utility;Archiving;
+Keywords=backup;recovery;arch;cachyos;restore;
+StartupNotify=true

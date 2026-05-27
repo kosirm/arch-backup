@@ -1,7 +1,7 @@
 # Maintainer: Milan <your-email@example.com>
 pkgname=arch-backup-tool-git
 _pkgname=arch-backup
-pkgver=1.0.0.r0.g1234567
+pkgver=r6.d580f02
 pkgrel=1
 pkgdesc="PyQt6 GUI and CLI package baseline/dotfile tracking and recovery tool for Arch Linux & CachyOS"
 arch=('any')

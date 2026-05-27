@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily tracking of non-pacman packages
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+RandomizedDelaySec=900
+
+[Install]
+WantedBy=timers.target

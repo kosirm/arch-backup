@@ -1,0 +1,463 @@
+#!/usr/bin/env bash
+# CachyOS Package Backup Tool
+set -euo pipefail
+
+# Configuration file path
+CONFIG_FILE="${HOME}/.config/cachyos-backup/config"
+
+# Config defaults
+BACKUP_REPO="${HOME}/cachyos-backup"
+GITHUB_REMOTE=""
+AUR_HELPER="yay"
+CHEZMOI_SOURCE=""
+EXTRAS_ENABLED=""
+TIMER_INTERVAL="daily"
+VERBOSE=0
+
+# Logger wrapper helpers
+log_info() {
+    local msg="$1"
+    if [ "$VERBOSE" -eq 1 ]; then
+        echo "INFO: $msg"
+    fi
+    if command -v logger >/dev/null 2>&1; then
+        logger -p user.info -t cachyos-backup "$msg" || true
+    fi
+}
+
+log_warn() {
+    local msg="$1"
+    if [ "$VERBOSE" -eq 1 ]; then
+        echo "WARN: $msg" >&2
+    fi
+    if command -v logger >/dev/null 2>&1; then
+        logger -p user.warning -t cachyos-backup "$msg" || true
+    fi
+}
+
+log_error() {
+    local msg="$1"
+    echo "ERROR: $msg" >&2
+    if command -v logger >/dev/null 2>&1; then
+        logger -p user.err -t cachyos-backup "$msg" || true
+    fi
+}
+
+load_config() {
+    if [ -f "$CONFIG_FILE" ]; then
+        # Source the configuration file
+        # shellcheck disable=SC1090
+        source "$CONFIG_FILE"
+    else
+        log_warn "Configuration file not found at $CONFIG_FILE. Using default values."
+    fi
+}
+
+validate_config() {
+    local errors=()
+    
+    if [ -z "${BACKUP_REPO:-}" ]; then
+        errors+=("BACKUP_REPO is empty or not defined")
+    fi
+    
+    if [ -n "${GITHUB_REMOTE:-}" ]; then
+        if [[ ! "$GITHUB_REMOTE" =~ ^(git@|https?://) ]]; then
+            errors+=("GITHUB_REMOTE '$GITHUB_REMOTE' must start with 'git@' or 'http://' or 'https://'")
+        fi
+    fi
+    
+    if [ "${AUR_HELPER:-}" != "yay" ] && [ "${AUR_HELPER:-}" != "paru" ]; then
+        errors+=("AUR_HELPER must be 'yay' or 'paru', got '${AUR_HELPER:-}'")
+    fi
+    
+    if [ -n "${EXTRAS_ENABLED:-}" ]; then
+        for extra in $EXTRAS_ENABLED; do
+            if [[ ! "$extra" =~ ^(flatpak|pip|cargo|npm)$ ]]; then
+                errors+=("Invalid extra manager in EXTRAS_ENABLED: '$extra'. Allowed: flatpak, pip, cargo, npm")
+            fi
+        done
+    fi
+    
+    if [ ${#errors[@]} -ne 0 ]; then
+        log_error "Configuration validation failed:"
+        for err in "${errors[@]}"; do
+            log_error "  - $err"
+        done
+        exit 1
+    fi
+}
+
+init_config() {
+    if [ -f "$CONFIG_FILE" ]; then
+        # Read from stdin to check if user wants to overwrite
+        # If not a terminal, do not overwrite unless forced
+        if [ -t 0 ]; then
+            read -p "Configuration file already exists at $CONFIG_FILE. Overwrite? [y/N] " -n 1 -r REPLY
+            echo
+            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                log_info "Initialization aborted by user."
+                return 0
+            fi
+        else
+            log_warn "Configuration file already exists. Skipping overwrite in non-interactive shell."
+            return 0
+        fi
+    fi
+    
+    mkdir -p "$(dirname "$CONFIG_FILE")"
+    
+    local default_repo="$HOME/cachyos-backup"
+    local default_remote=""
+    
+    if [ -t 0 ]; then
+        read -p "Enter backup repository path [$default_repo]: " user_repo
+        BACKUP_REPO="${user_repo:-$default_repo}"
+        
+        read -p "Enter GitHub remote URL (e.g. git@github.com:username/cachyos-backup.git): " user_remote
+        GITHUB_REMOTE="${user_remote:-$default_remote}"
+    else
+        BACKUP_REPO="$default_repo"
+        GITHUB_REMOTE="$default_remote"
+    fi
+    
+    cat <<EOF > "$CONFIG_FILE"
+# CachyOS Backup Configuration
+
+# Path to the local backup repository
+BACKUP_REPO="$BACKUP_REPO"
+
+# GitHub remote URL
+GITHUB_REMOTE="$GITHUB_REMOTE"
+
+# AUR helper: yay or paru
+AUR_HELPER="$AUR_HELPER"
+
+# Chezmoi source directory (leave empty for default)
+CHEZMOI_SOURCE="$CHEZMOI_SOURCE"
+
+# Enabled non-pacman package managers (space-separated)
+# Options: flatpak pip cargo npm
+EXTRAS_ENABLED="$EXTRAS_ENABLED"
+
+# Periodic timer interval (systemd OnCalendar syntax)
+TIMER_INTERVAL="$TIMER_INTERVAL"
+EOF
+
+    log_info "Initialized configuration file at $CONFIG_FILE"
+    echo "Configuration initialized at $CONFIG_FILE"
+}
+
+capture_baseline() {
+    if ! command -v pacman >/dev/null 2>&1; then
+        echo "Error: pacman command not found. This script requires a pacman-based system." >&2
+        exit 1
+    fi
+    
+    if [ -z "${BACKUP_REPO:-}" ]; then
+        log_error "BACKUP_REPO is empty. Please set it in config or run --init first."
+        exit 1
+    fi
+    
+    local baseline_official="${BACKUP_REPO}/baseline-official.txt"
+    local baseline_foreign="${BACKUP_REPO}/baseline-foreign.txt"
+    
+    if [ -f "$baseline_official" ] || [ -f "$baseline_foreign" ]; then
+        echo -n "Baseline snapshot files already exist in $BACKUP_REPO. Overwrite? [y/N] " >&2
+        local REPLY=""
+        # Read from stdin, handle EOF gracefully
+        if ! read -r REPLY; then
+            log_warn "Baseline files already exist. Overwrite aborted (EOF)."
+            return 0
+        fi
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            log_info "Baseline capture aborted by user."
+            return 0
+        fi
+    fi
+    
+    mkdir -p "$BACKUP_REPO"
+    
+    log_info "Capturing official packages baseline..."
+    pacman -Qqen | sed '/^$/d' | LC_ALL=C sort > "$baseline_official"
+    
+    log_info "Capturing foreign packages baseline..."
+    local foreign_list
+    if foreign_list=$(pacman -Qqem 2>/dev/null); then
+        echo "$foreign_list" | sed '/^$/d' | LC_ALL=C sort > "$baseline_foreign"
+    else
+        true > "$baseline_foreign"
+    fi
+    
+    log_info "Baseline snapshot captured successfully."
+    echo "Baseline snapshot captured in $BACKUP_REPO"
+}
+
+compute_diff() {
+    local baseline_official="${BACKUP_REPO}/baseline-official.txt"
+    local baseline_foreign="${BACKUP_REPO}/baseline-foreign.txt"
+    
+    if [ ! -f "$baseline_official" ] || [ ! -f "$baseline_foreign" ]; then
+        echo "Error: Baseline snapshot files not found in $BACKUP_REPO." >&2
+        echo "Please capture the baseline snapshot first by running: cachyos-backup --baseline" >&2
+        exit 1
+    fi
+    
+    local user_official="${BACKUP_REPO}/user-official.txt"
+    local user_foreign="${BACKUP_REPO}/user-foreign.txt"
+    
+    log_info "Computing official packages diff..."
+    LC_ALL=C comm -23 <(pacman -Qqen | sed '/^$/d' | LC_ALL=C sort) "$baseline_official" > "$user_official"
+    
+    log_info "Computing foreign packages diff..."
+    LC_ALL=C comm -23 <((pacman -Qqem 2>/dev/null || true) | sed '/^$/d' | LC_ALL=C sort) "$baseline_foreign" > "$user_foreign"
+    
+    local added_official_count
+    added_official_count=$(grep -c '^' "$user_official" || true)
+    
+    local added_foreign_count
+    added_foreign_count=$(grep -c '^' "$user_foreign" || true)
+    
+    log_info "Package diff computation complete. Added official: $added_official_count, added foreign: $added_foreign_count"
+}
+
+DOTFILES_CHANGED="unchanged"
+EXTRAS_TRACKED="unchanged"
+
+sync_dotfiles() {
+    if ! command -v chezmoi >/dev/null 2>&1; then
+        log_warn "chezmoi is not installed. Skipping dotfile tracking."
+        DOTFILES_CHANGED="skipped"
+        return 0
+    fi
+    
+    log_info "Syncing dotfiles via chezmoi..."
+    local cz_status
+    cz_status=$(chezmoi status 2>/dev/null || true)
+    if [ -n "$cz_status" ]; then
+        DOTFILES_CHANGED="changed"
+    else
+        DOTFILES_CHANGED="unchanged"
+    fi
+    
+    log_info "Re-adding tracked files to chezmoi..."
+    chezmoi re-add || log_warn "chezmoi re-add returned non-zero status"
+}
+
+track_extras() {
+    local extras_updated=()
+    
+    if [ -n "${EXTRAS_ENABLED:-}" ]; then
+        for manager in $EXTRAS_ENABLED; do
+            if ! command -v "$manager" >/dev/null 2>&1; then
+                log_warn "$manager is enabled but not installed. Skipping."
+                continue
+            fi
+            
+            log_info "Tracking packages from $manager..."
+            case "$manager" in
+                flatpak)
+                    flatpak list --app --columns=application | sed '/^$/d' | LC_ALL=C sort > "$BACKUP_REPO/flatpak-packages.txt"
+                    extras_updated+=("flatpak")
+                    ;;
+                pip)
+                    pip list --user --format=freeze | sed '/^$/d' | LC_ALL=C sort > "$BACKUP_REPO/pip-packages.txt"
+                    extras_updated+=("pip")
+                    ;;
+                cargo)
+                    cargo install --list | awk '/^[^ ]+ v[0-9]+/ { name=$1; ver=$2; sub(/^v/, "", ver); sub(/:$/, "", ver); print name, ver }' | sed '/^$/d' | LC_ALL=C sort > "$BACKUP_REPO/cargo-packages.txt"
+                    extras_updated+=("cargo")
+                    ;;
+                npm)
+                    npm list -g --depth=0 2>/dev/null | sed -E -n 's/^(├──|└──) //p' | sed -E 's/@[^@]+$//' | sed '/^$/d' | LC_ALL=C sort > "$BACKUP_REPO/npm-packages.txt"
+                    extras_updated+=("npm")
+                    ;;
+            esac
+        done
+    fi
+    
+    if [ ${#extras_updated[@]} -ne 0 ]; then
+        EXTRAS_TRACKED=$(echo "${extras_updated[*]}")
+    else
+        EXTRAS_TRACKED="unchanged"
+    fi
+}
+
+git_commit_push() {
+    if [ ! -d "${BACKUP_REPO}/.git" ]; then
+        echo "Error: $BACKUP_REPO is not initialized as a git repository." >&2
+        echo "Please run 'git init' inside $BACKUP_REPO and configure a remote repository." >&2
+        exit 1
+    fi
+    
+    local git_status
+    git_status=$(git -C "$BACKUP_REPO" status --porcelain)
+    if [ -z "$git_status" ]; then
+        log_info "No changes detected in backup repository. Skipping commit and push."
+        return 0
+    fi
+    
+    git -C "$BACKUP_REPO" add -A
+    
+    local added_official=0
+    local removed_official=0
+    local added_foreign=0
+    local removed_foreign=0
+    
+    if git -C "$BACKUP_REPO" diff --cached --quiet user-official.txt; then
+        true
+    else
+        added_official=$(git -C "$BACKUP_REPO" diff --cached user-official.txt | grep -E '^\+[^+]' | wc -l || true)
+        removed_official=$(git -C "$BACKUP_REPO" diff --cached user-official.txt | grep -E '^-[^-]' | wc -l || true)
+    fi
+    
+    if git -C "$BACKUP_REPO" diff --cached --quiet user-foreign.txt; then
+        true
+    else
+        added_foreign=$(git -C "$BACKUP_REPO" diff --cached user-foreign.txt | grep -E '^\+[^+]' | wc -l || true)
+        removed_foreign=$(git -C "$BACKUP_REPO" diff --cached user-foreign.txt | grep -E '^-[^-]' | wc -l || true)
+    fi
+    
+    local timestamp
+    timestamp=$(date +"%Y-%m-%d %H:%M:%S")
+    
+    local total_added=$((added_official + added_foreign))
+    local total_removed=$((removed_official + removed_foreign))
+    local summary=""
+    if [ "$total_added" -eq 0 ] && [ "$total_removed" -eq 0 ]; then
+        if [ "$DOTFILES_CHANGED" = "changed" ]; then
+            summary="dotfiles updated"
+        elif [ "$EXTRAS_TRACKED" != "unchanged" ]; then
+            summary="extras updated ($EXTRAS_TRACKED)"
+        else
+            summary="files updated"
+        fi
+    else
+        summary=""
+        if [ "$total_added" -gt 0 ]; then
+            summary+="$total_added package(s) added"
+        fi
+        if [ "$total_removed" -gt 0 ]; then
+            if [ -n "$summary" ]; then summary+=", "; fi
+            summary+="$total_removed package(s) removed"
+        fi
+    fi
+    
+    local commit_msg
+    commit_msg=$(cat <<EOF
+backup: $summary ($timestamp)
+
+Packages: +$added_official -$removed_official official, +$added_foreign -$removed_foreign foreign
+Dotfiles: $DOTFILES_CHANGED
+Extras: $EXTRAS_TRACKED
+EOF
+)
+
+    log_info "Committing changes..."
+    git -C "$BACKUP_REPO" commit -m "$commit_msg"
+    
+    if [ -n "${GITHUB_REMOTE:-}" ]; then
+        log_info "Pushing changes to remote: $GITHUB_REMOTE..."
+        local push_err
+        # Redirect stderr to stdout to capture push error
+        if ! push_err=$(git -C "$BACKUP_REPO" push "$GITHUB_REMOTE" HEAD 2>&1); then
+            log_error "Git push failed: $push_err"
+            exit 1
+        fi
+    else
+        log_warn "GITHUB_REMOTE is not configured. Skipping remote push."
+    fi
+}
+
+show_help() {
+    cat <<EOF
+Usage: cachyos-backup [OPTIONS]
+
+Options:
+  --init        Create config file with defaults, prompt for customization
+  --baseline    Capture baseline snapshot of current packages
+  --backup      Run full package diff + chezmoi + git push
+  --extras      Run non-pacman package manager tracking + git push
+  --verbose     Print detailed output to stdout in addition to journal logging
+  --help        Print usage information
+EOF
+}
+
+# Only run main if executing directly (not sourcing)
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    action=""
+    
+    # Parse options manually to support combined/multiple flags (like --verbose with another action)
+    for arg in "$@"; do
+        case "$arg" in
+            --verbose)
+                VERBOSE=1
+                ;;
+            --init)
+                action="init"
+                ;;
+            --baseline)
+                action="baseline"
+                ;;
+            --backup)
+                action="backup"
+                ;;
+            --extras)
+                action="extras"
+                ;;
+            --help)
+                action="help"
+                ;;
+            *)
+                echo "Unknown option: $arg" >&2
+                show_help
+                exit 1
+                ;;
+        esac
+    done
+
+    # Check for pacman on start if action requires it
+    if [[ "$action" =~ ^(baseline|backup|extras)$ ]]; then
+        if ! command -v pacman >/dev/null 2>&1; then
+            echo "Error: pacman command not found. This script requires a pacman-based system." >&2
+            exit 1
+        fi
+    fi
+    
+    case "$action" in
+        init)
+            init_config
+            ;;
+        baseline)
+            load_config
+            capture_baseline
+            ;;
+        backup)
+            log_info "CachyOS Package Backup: Starting backup..."
+            load_config
+            validate_config
+            compute_diff
+            sync_dotfiles
+            git_commit_push
+            official_count=0
+            foreign_count=0
+            if [ -f "${BACKUP_REPO}/user-official.txt" ]; then
+                official_count=$(grep -c '^' "${BACKUP_REPO}/user-official.txt" || true)
+            fi
+            if [ -f "${BACKUP_REPO}/user-foreign.txt" ]; then
+                foreign_count=$(grep -c '^' "${BACKUP_REPO}/user-foreign.txt" || true)
+            fi
+            log_info "CachyOS Package Backup: Completed. Tracked official: $official_count, foreign: $foreign_count. Git push succeeded."
+            ;;
+        extras)
+            log_info "CachyOS Package Backup: Starting extras backup..."
+            load_config
+            validate_config
+            track_extras
+            git_commit_push
+            log_info "CachyOS Package Backup: Extras backup completed. Managers tracked: $EXTRAS_TRACKED. Git push succeeded."
+            ;;
+        help|"")
+            show_help
+            ;;
+    esac
+fi

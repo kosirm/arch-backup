@@ -1,0 +1,365 @@
+#!/usr/bin/env bash
+# CachyOS Package Recovery Tool
+set -euo pipefail
+
+# Default values
+REPO_URL=""
+BACKUP_REPO="${HOME}/cachyos-backup"
+AUR_HELPER=""
+SKIP_DOTFILES=0
+SKIP_EXTRAS=0
+DRY_RUN=0
+
+# Counters
+official_installed=0
+official_skipped=0
+official_failed=0
+
+foreign_installed=0
+foreign_skipped=0
+foreign_failed=0
+
+flatpak_installed=0
+flatpak_skipped=0
+flatpak_failed=0
+
+pip_installed=0
+pip_skipped=0
+pip_failed=0
+
+cargo_installed=0
+cargo_skipped=0
+cargo_failed=0
+
+npm_installed=0
+npm_skipped=0
+npm_failed=0
+
+show_help() {
+    cat <<EOF
+Usage: cachyos-recovery [OPTIONS]
+
+Options:
+  --repo <url>              GitHub repository URL to clone
+  --local <path>            Use existing local backup repository (default: ~/cachyos-backup)
+  --aur-helper <yay|paru>   AUR helper to use
+  --skip-dotfiles           Skip chezmoi restoration
+  --skip-extras             Skip non-pacman package restoration
+  --dry-run                 Show what would be installed without installing
+  --help                    Print usage information
+EOF
+}
+
+# Parse options
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --repo)
+            REPO_URL="$2"
+            shift 2
+            ;;
+        --local)
+            BACKUP_REPO="$2"
+            shift 2
+            ;;
+        --aur-helper)
+            AUR_HELPER="$2"
+            shift 2
+            ;;
+        --skip-dotfiles)
+            SKIP_DOTFILES=1
+            shift
+            ;;
+        --skip-extras)
+            SKIP_EXTRAS=1
+            shift
+            ;;
+        --dry-run)
+            DRY_RUN=1
+            shift
+            ;;
+        --help)
+            show_help
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $1" >&2
+            show_help
+            exit 1
+            ;;
+    esac
+done
+
+clone_or_pull() {
+    if [ -n "$REPO_URL" ]; then
+        if [ -d "$BACKUP_REPO/.git" ]; then
+            echo "Updating local repository at $BACKUP_REPO..."
+            if [ "$DRY_RUN" -eq 1 ]; then
+                echo "[DRY RUN] Would run: git -C $BACKUP_REPO pull"
+            else
+                git -C "$BACKUP_REPO" pull
+            fi
+        else
+            echo "Cloning repository $REPO_URL to $BACKUP_REPO..."
+            if [ "$DRY_RUN" -eq 1 ]; then
+                echo "[DRY RUN] Would run: git clone $REPO_URL $BACKUP_REPO"
+            else
+                mkdir -p "$(dirname "$BACKUP_REPO")"
+                git clone "$REPO_URL" "$BACKUP_REPO"
+            fi
+        fi
+    else
+        if [ ! -d "$BACKUP_REPO" ] && [ "$DRY_RUN" -eq 0 ]; then
+            echo "Error: Local repository $BACKUP_REPO does not exist and no --repo URL was specified." >&2
+            exit 1
+        fi
+    fi
+}
+
+install_official() {
+    local file="${BACKUP_REPO}/user-official.txt"
+    if [ ! -f "$file" ]; then
+        return 0
+    fi
+    
+    while read -r pkg || [ -n "$pkg" ]; do
+        [ -z "$pkg" ] && continue
+        if command -v pacman >/dev/null 2>&1 && pacman -Q "$pkg" >/dev/null 2>&1; then
+            ((++official_skipped))
+        else
+            if [ "$DRY_RUN" -eq 1 ]; then
+                echo "[DRY RUN] Would install official package: $pkg"
+                ((++official_installed))
+            else
+                echo "Installing official package: $pkg..."
+                if sudo pacman -S --needed --noconfirm "$pkg"; then
+                    ((++official_installed))
+                else
+                    echo "Warning: Failed to install official package '$pkg'." >&2
+                    ((++official_failed))
+                fi
+            fi
+        fi
+    done < "$file"
+}
+
+install_foreign() {
+    local file="${BACKUP_REPO}/user-foreign.txt"
+    if [ ! -f "$file" ]; then
+        return 0
+    fi
+    
+    local pkgs=()
+    while read -r pkg || [ -n "$pkg" ]; do
+        [ -n "$pkg" ] && pkgs+=("$pkg")
+    done < "$file"
+    
+    if [ ${#pkgs[@]} -eq 0 ]; then
+        return 0
+    fi
+    
+    # Determine AUR helper
+    local helper="$AUR_HELPER"
+    if [ -z "$helper" ]; then
+        if command -v yay >/dev/null 2>&1; then
+            helper="yay"
+        elif command -v paru >/dev/null 2>&1; then
+            helper="paru"
+        fi
+    fi
+    
+    if [ -z "$helper" ] || ! command -v "$helper" >/dev/null 2>&1; then
+        echo "Error: AUR helper is not available. Please install 'yay' or 'paru' first." >&2
+        echo "The following foreign packages could not be installed:" >&2
+        for pkg in "${pkgs[@]}"; do
+            echo "  - $pkg" >&2
+            ((++foreign_failed))
+        done
+        return 1
+    fi
+    
+    for pkg in "${pkgs[@]}"; do
+        if command -v pacman >/dev/null 2>&1 && pacman -Q "$pkg" >/dev/null 2>&1; then
+            ((++foreign_skipped))
+        else
+            if [ "$DRY_RUN" -eq 1 ]; then
+                echo "[DRY RUN] Would install foreign package: $pkg using $helper"
+                ((++foreign_installed))
+            else
+                echo "Installing foreign package: $pkg using $helper..."
+                if "$helper" -S --needed --noconfirm "$pkg"; then
+                    ((++foreign_installed))
+                else
+                    echo "Warning: Failed to install foreign package '$pkg' using $helper." >&2
+                    ((++foreign_failed))
+                fi
+            fi
+        fi
+    done
+}
+
+restore_dotfiles() {
+    if [ "$SKIP_DOTFILES" -eq 1 ]; then
+        return 0
+    fi
+    
+    local repo_url="$REPO_URL"
+    if [ -z "$repo_url" ] && [ -d "$BACKUP_REPO/.git" ]; then
+        repo_url=$(git -C "$BACKUP_REPO" remote get-url origin 2>/dev/null || true)
+    fi
+    
+    if [ -z "$repo_url" ]; then
+        echo "Warning: GitHub repository URL is not configured. Skipping dotfile restoration." >&2
+        return 0
+    fi
+    
+    if ! command -v chezmoi >/dev/null 2>&1; then
+        echo "Warning: 'chezmoi' is not installed. Skipping dotfile restoration." >&2
+        return 0
+    fi
+    
+    if [ "$DRY_RUN" -eq 1 ]; then
+        echo "[DRY RUN] Would restore dotfiles via: chezmoi init --apply $repo_url"
+    else
+        echo "Restoring dotfiles via chezmoi..."
+        if chezmoi init --apply "$repo_url"; then
+            echo "Dotfiles restored successfully."
+        else
+            echo "Warning: chezmoi restoration failed." >&2
+        fi
+    fi
+}
+
+restore_extras() {
+    if [ "$SKIP_EXTRAS" -eq 1 ]; then
+        return 0
+    fi
+    
+    # 1. Flatpak
+    local flatpak_file="$BACKUP_REPO/flatpak-packages.txt"
+    if [ -f "$flatpak_file" ]; then
+        if ! command -v flatpak >/dev/null 2>&1; then
+            echo "Warning: 'flatpak' is not installed. Skipping flatpak restoration." >&2
+        else
+            while read -r pkg || [ -n "$pkg" ]; do
+                [ -z "$pkg" ] && continue
+                if flatpak info "$pkg" >/dev/null 2>&1; then
+                    ((++flatpak_skipped))
+                else
+                    if [ "$DRY_RUN" -eq 1 ]; then
+                        echo "[DRY RUN] Would install flatpak package: $pkg"
+                        ((++flatpak_installed))
+                    else
+                        echo "Installing flatpak package: $pkg..."
+                        if flatpak install --assumeyes "$pkg"; then
+                            ((++flatpak_installed))
+                        else
+                            echo "Warning: Failed to install flatpak package '$pkg'." >&2
+                            ((++flatpak_failed))
+                        fi
+                    fi
+                fi
+            done < "$flatpak_file"
+        fi
+    fi
+    
+    # 2. Pip
+    local pip_file="$BACKUP_REPO/pip-packages.txt"
+    if [ -f "$pip_file" ]; then
+        if ! command -v pip >/dev/null 2>&1 && ! command -v pip3 >/dev/null 2>&1; then
+            echo "Warning: 'pip' is not installed. Skipping pip restoration." >&2
+        else
+            local pip_cmd="pip"
+            command -v pip3 >/dev/null 2>&1 && pip_cmd="pip3"
+            
+            local total
+            total=$(grep -c '^' "$pip_file" || true)
+            if [ "$DRY_RUN" -eq 1 ]; then
+                echo "[DRY RUN] Would restore pip packages via: $pip_cmd install --user -r $pip_file"
+                pip_installed=$total
+            else
+                echo "Restoring pip packages..."
+                if "$pip_cmd" install --user -r "$pip_file"; then
+                    pip_installed=$total
+                else
+                    echo "Warning: Failed to restore pip packages." >&2
+                    pip_failed=$total
+                fi
+            fi
+        fi
+    fi
+    
+    # 3. Cargo
+    local cargo_file="$BACKUP_REPO/cargo-packages.txt"
+    if [ -f "$cargo_file" ]; then
+        if ! command -v cargo >/dev/null 2>&1; then
+            echo "Warning: 'cargo' is not installed. Skipping cargo restoration." >&2
+        else
+            while read -r crate version || [ -n "$crate" ]; do
+                [ -z "$crate" ] && continue
+                if cargo install --list | grep -q "^${crate} v" 2>/dev/null; then
+                    ((++cargo_skipped))
+                else
+                    if [ "$DRY_RUN" -eq 1 ]; then
+                        echo "[DRY RUN] Would install cargo crate: $crate"
+                        ((++cargo_installed))
+                    else
+                        echo "Installing cargo crate: $crate..."
+                        if cargo install "$crate"; then
+                            ((++cargo_installed))
+                        else
+                            echo "Warning: Failed to install cargo crate '$crate'." >&2
+                            ((++cargo_failed))
+                        fi
+                    fi
+                fi
+            done < "$cargo_file"
+        fi
+    fi
+    
+    # 4. Npm
+    local npm_file="$BACKUP_REPO/npm-packages.txt"
+    if [ -f "$npm_file" ]; then
+        if ! command -v npm >/dev/null 2>&1; then
+            echo "Warning: 'npm' is not installed. Skipping npm restoration." >&2
+        else
+            while read -r pkg || [ -n "$pkg" ]; do
+                [ -z "$pkg" ] && continue
+                if npm list -g --depth=0 "$pkg" >/dev/null 2>&1; then
+                    ((++npm_skipped))
+                else
+                    if [ "$DRY_RUN" -eq 1 ]; then
+                        echo "[DRY RUN] Would install npm package: $pkg globally"
+                        ((++npm_installed))
+                    else
+                        echo "Installing npm package: $pkg globally..."
+                        if sudo npm install -g "$pkg"; then
+                            ((++npm_installed))
+                        else
+                            echo "Warning: Failed to install npm package '$pkg' globally." >&2
+                            ((++npm_failed))
+                        fi
+                    fi
+                fi
+            done < "$npm_file"
+        fi
+    fi
+}
+
+print_summary() {
+    echo "=== Recovery Summary ==="
+    echo "Official: installed=${official_installed}, skipped=${official_skipped}, failed=${official_failed}"
+    echo "Foreign: installed=${foreign_installed}, skipped=${foreign_skipped}, failed=${foreign_failed}"
+    echo "Flatpak: installed=${flatpak_installed}, skipped=${flatpak_skipped}, failed=${flatpak_failed}"
+    echo "Pip: installed=${pip_installed}, skipped=${pip_skipped}, failed=${pip_failed}"
+    echo "Cargo: installed=${cargo_installed}, skipped=${cargo_skipped}, failed=${cargo_failed}"
+    echo "Npm: installed=${npm_installed}, skipped=${npm_skipped}, failed=${npm_failed}"
+    echo "========================"
+}
+
+# Main workflow
+clone_or_pull
+install_official
+install_foreign
+restore_dotfiles
+restore_extras
+print_summary

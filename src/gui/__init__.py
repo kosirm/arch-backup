@@ -1,1 +1,1 @@
-# CachyOS Package Backup GUI package
+# Arch Package Backup GUI package

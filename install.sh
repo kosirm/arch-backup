@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Installation script for CachyOS Package Backup and Recovery System
+# Installation script for Arch Package Backup and Recovery System
 set -euo pipefail
 
 DESTDIR="${DESTDIR:-}"
+PREFIX="${PREFIX:-/usr/local}"
 
 # 1. Check root privileges (skip if DESTDIR is set for testing/packaging)
 if [ -z "$DESTDIR" ] && [ "${EUID:-$(id -u)}" -ne 0 ]; then
@@ -29,45 +30,62 @@ if ! command -v chezmoi >/dev/null 2>&1; then
 fi
 
 # 3. Create necessary directories
-mkdir -p "$DESTDIR/usr/local/bin"
-mkdir -p "$DESTDIR/usr/local/share/arch-backup-tool/gui"
+mkdir -p "$DESTDIR$PREFIX/bin"
+mkdir -p "$DESTDIR$PREFIX/share/arch-backup-tool/gui"
 mkdir -p "$DESTDIR/etc/pacman.d/hooks"
-mkdir -p "$DESTDIR/etc/systemd/system"
+
+# Determine systemd unit folder based on prefix
+if [ "$PREFIX" = "/usr" ]; then
+    SYSTEMD_DIR="$DESTDIR/usr/lib/systemd/user"
+else
+    SYSTEMD_DIR="$DESTDIR/etc/systemd/system"
+fi
+mkdir -p "$SYSTEMD_DIR"
 
 # 4. Copy files to system locations
 echo "Installing scripts..."
-cp src/cachyos-backup "$DESTDIR/usr/local/bin/cachyos-backup"
-chmod 755 "$DESTDIR/usr/local/bin/cachyos-backup"
+cp src/cachyos-backup "$DESTDIR$PREFIX/bin/cachyos-backup"
+chmod 755 "$DESTDIR$PREFIX/bin/cachyos-backup"
 
-cp src/cachyos-recovery "$DESTDIR/usr/local/bin/cachyos-recovery"
-chmod 755 "$DESTDIR/usr/local/bin/cachyos-recovery"
+cp src/cachyos-recovery "$DESTDIR$PREFIX/bin/cachyos-recovery"
+chmod 755 "$DESTDIR$PREFIX/bin/cachyos-recovery"
 
-cp src/arch-backup-tool "$DESTDIR/usr/local/bin/arch-backup-tool"
-chmod 755 "$DESTDIR/usr/local/bin/arch-backup-tool"
+cp src/arch-backup-tool "$DESTDIR$PREFIX/bin/arch-backup-tool"
+chmod 755 "$DESTDIR$PREFIX/bin/arch-backup-tool"
 
-cp src/gui/__init__.py "$DESTDIR/usr/local/share/arch-backup-tool/gui/__init__.py"
-cp src/gui/main.py "$DESTDIR/usr/local/share/arch-backup-tool/gui/main.py"
-cp src/gui/wizard.py "$DESTDIR/usr/local/share/arch-backup-tool/gui/wizard.py"
-cp src/gui/dashboard.py "$DESTDIR/usr/local/share/arch-backup-tool/gui/dashboard.py"
-cp src/gui/utils.py "$DESTDIR/usr/local/share/arch-backup-tool/gui/utils.py"
-chmod 644 "$DESTDIR/usr/local/share/arch-backup-tool/gui/"*.py
+cp src/gui/__init__.py "$DESTDIR$PREFIX/share/arch-backup-tool/gui/__init__.py"
+cp src/gui/main.py "$DESTDIR$PREFIX/share/arch-backup-tool/gui/main.py"
+cp src/gui/wizard.py "$DESTDIR$PREFIX/share/arch-backup-tool/gui/wizard.py"
+cp src/gui/dashboard.py "$DESTDIR$PREFIX/share/arch-backup-tool/gui/dashboard.py"
+cp src/gui/utils.py "$DESTDIR$PREFIX/share/arch-backup-tool/gui/utils.py"
+chmod 644 "$DESTDIR$PREFIX/share/arch-backup-tool/gui/"*.py
 
 echo "Installing Pacman hook..."
-cp config/cachyos-backup.hook "$DESTDIR/etc/pacman.d/hooks/cachyos-backup.hook"
+sed "s|/usr/local/bin|$PREFIX/bin|g" config/cachyos-backup.hook > "$DESTDIR/etc/pacman.d/hooks/cachyos-backup.hook"
 chmod 644 "$DESTDIR/etc/pacman.d/hooks/cachyos-backup.hook"
 
 echo "Installing Systemd units..."
-cp config/cachyos-backup-extras.timer "$DESTDIR/etc/systemd/system/cachyos-backup-extras.timer"
-chmod 644 "$DESTDIR/etc/systemd/system/cachyos-backup-extras.timer"
+cp config/cachyos-backup-extras.timer "$SYSTEMD_DIR/cachyos-backup-extras.timer"
+chmod 644 "$SYSTEMD_DIR/cachyos-backup-extras.timer"
 
-cp config/cachyos-backup-extras.service "$DESTDIR/etc/systemd/system/cachyos-backup-extras.service"
-chmod 644 "$DESTDIR/etc/systemd/system/cachyos-backup-extras.service"
+if [ "$PREFIX" = "/usr" ]; then
+    # For user systemd unit, strip User=%I
+    sed -e "s|/usr/local/bin|$PREFIX/bin|g" -e "/User=%I/d" config/cachyos-backup-extras.service > "$SYSTEMD_DIR/cachyos-backup-extras.service"
+else
+    sed "s|/usr/local/bin|$PREFIX/bin|g" config/cachyos-backup-extras.service > "$SYSTEMD_DIR/cachyos-backup-extras.service"
+fi
+chmod 644 "$SYSTEMD_DIR/cachyos-backup-extras.service"
 
 # 5. Reload systemd and enable timer
 if [ -z "$DESTDIR" ]; then
     echo "Enabling Systemd timer..."
-    systemctl daemon-reload
-    systemctl enable --now cachyos-backup-extras.timer
+    if [ "$PREFIX" = "/usr" ]; then
+        systemctl --user daemon-reload
+        systemctl --user enable --now cachyos-backup-extras.timer
+    else
+        systemctl daemon-reload
+        systemctl enable --now cachyos-backup-extras.timer
+    fi
 else
     echo "Skipping systemctl commands in DESTDIR mode."
 fi

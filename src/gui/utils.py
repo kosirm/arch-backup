@@ -14,6 +14,8 @@ def load_gui_config():
         "GITHUB_REMOTE": "",
         "AUR_HELPER": "yay",
         "CHEZMOI_SOURCE": "",
+        "USE_CHEZMOI": "true",
+        "USE_KONSAVE": "true",
         "EXTRAS_ENABLED": "",
         "TIMER_INTERVAL": "daily",
     }
@@ -49,6 +51,8 @@ def save_gui_config(config):
             f.write(f'# GitHub remote URL\nGITHUB_REMOTE="{config.get("GITHUB_REMOTE", "")}"\n\n')
             f.write(f'# AUR helper: yay or paru\nAUR_HELPER="{config.get("AUR_HELPER", "yay")}"\n\n')
             f.write(f'# Chezmoi source directory (leave empty for default)\nCHEZMOI_SOURCE="{config.get("CHEZMOI_SOURCE", "")}"\n\n')
+            f.write(f'# Use Chezmoi integration\nUSE_CHEZMOI="{config.get("USE_CHEZMOI", "true")}"\n\n')
+            f.write(f'# Use Konsave integration\nUSE_KONSAVE="{config.get("USE_KONSAVE", "true")}"\n\n')
             f.write(f'# Enabled non-pacman package managers (space-separated)\n# Options: flatpak pip cargo npm\nEXTRAS_ENABLED="{config.get("EXTRAS_ENABLED", "")}"\n\n')
             f.write(f'# Periodic timer interval (systemd OnCalendar syntax)\nTIMER_INTERVAL="{config.get("TIMER_INTERVAL", "daily")}"\n')
         return True
@@ -151,3 +155,60 @@ def resolve_script_path(script_name):
     if system_path:
         return system_path
     return script_name
+
+def sync_user_systemd_timer(interval):
+    """
+    Generate and enable a systemd user timer for cachyos-backup-extras.
+    interval can be: 'daily', 'weekly', or a time like '14:30'.
+    """
+    import subprocess
+    user_systemd_dir = os.path.expanduser("~/.config/systemd/user")
+    os.makedirs(user_systemd_dir, exist_ok=True)
+    
+    # Format OnCalendar value
+    if ":" in interval:
+        on_calendar = f"*-*-* {interval}:00"
+    else:
+        on_calendar = interval # 'daily', 'weekly', etc.
+        
+    timer_path = os.path.join(user_systemd_dir, "cachyos-backup-extras.timer")
+    service_path = os.path.join(user_systemd_dir, "cachyos-backup-extras.service")
+    
+    try:
+        # Write timer unit
+        with open(timer_path, "w") as f:
+            f.write(f"""[Unit]
+Description=Daily tracking of non-pacman packages and KDE settings
+
+[Timer]
+OnCalendar={on_calendar}
+Persistent=true
+RandomizedDelaySec=900
+
+[Install]
+WantedBy=timers.target
+""")
+            
+        # Write service unit
+        cli_path = resolve_script_path("cachyos-backup")
+        if not cli_path.startswith("/"):
+            cli_path = "/usr/local/bin/cachyos-backup"
+            
+        with open(service_path, "w") as f:
+            f.write(f"""[Unit]
+Description=Non-pacman package backup and KDE settings backup
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart={cli_path} --extras
+""")
+            
+        # Reload daemon and enable timer
+        subprocess.run(["systemctl", "--user", "daemon-reload"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(["systemctl", "--user", "enable", "--now", "cachyos-backup-extras.timer"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return True
+    except Exception as e:
+        print(f"Error syncing systemd timer: {e}")
+        return False

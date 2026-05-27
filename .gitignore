@@ -1,1 +1,8 @@
 .kiro/
+__pycache__/
+*.pyc
+pkg/
+src/
+/srcdir/
+/pkgdir/
+arch-backup-tool-git-*.pkg.tar.zst

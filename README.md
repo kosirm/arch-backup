@@ -1,11 +1,14 @@
-# CachyOS Package Backup and Recovery System
+# Arch Package Backup and Recovery System
 
-Welcome! This system helps you automatically back up your installed packages, application lists, and system dotfiles (configurations) on Arch Linux, and restore them quickly if you ever need to install fresh system.
+Welcome! This system helps you automatically back up your installed packages, application lists, and system dotfiles (configurations) on Arch Linux, and restore them quickly if you ever need to install fresh system. Program can be used either commandline or with a GUI.
+To install GUI on arch linux:
+
+
 
 ---
 
 ## Table of Contents
-- [CachyOS Package Backup and Recovery System](#cachyos-package-backup-and-recovery-system)
+- [Arch Package Backup and Recovery System](#arch-package-backup-and-recovery-system)
   - [Table of Contents](#table-of-contents)
   - [How to Install](#how-to-install)
   - [Step 1: Set Up Your GitHub Repository](#step-1-set-up-your-github-repository)
@@ -20,7 +23,6 @@ Welcome! This system helps you automatically back up your installed packages, ap
   - [Command Flags for Advanced Recovery](#command-flags-for-advanced-recovery)
   - [How to back up KDE Plasma settings?](#how-to-back-up-kde-plasma-settings)
   - [How to Uninstall](#how-to-uninstall)
-- [arch-backup](#arch-backup)
 
 ---
 
@@ -248,4 +250,4 @@ If you wish to remove the backup automation, hook, and command line tools from y
    ```
 
 *Note:* To protect your backup data, uninstalling only removes the automation and tools from system folders. It **preserves** your local configuration folder (`~/.config/cachyos-backup`) and local backup data folder (`~/cachyos-backup`). If you want to remove them too, you can delete them manually.
-# arch-backup
+

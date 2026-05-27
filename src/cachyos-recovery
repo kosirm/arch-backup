@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# CachyOS Package Recovery Tool
+# Arch Package Recovery Tool
 set -euo pipefail
 
 # Default values
@@ -345,6 +345,31 @@ restore_extras() {
     fi
 }
 
+restore_konsave() {
+    if ! command -v konsave >/dev/null 2>&1; then
+        return 0
+    fi
+
+    local knsv_files
+    knsv_files=$(find "$BACKUP_REPO" -maxdepth 1 -name "*.knsv" 2>/dev/null || true)
+    if [ -z "$knsv_files" ]; then
+        return 0
+    fi
+
+    echo "Restoring KDE Plasma settings via Konsave..."
+    for file in $knsv_files; do
+        [ -f "$file" ] || continue
+        local profile_name
+        profile_name=$(basename "$file" .knsv)
+        if [ "$DRY_RUN" -eq 1 ]; then
+            echo "[DRY RUN] Would import konsave profile: $profile_name from $file"
+        else
+            echo "Importing konsave profile: $profile_name..."
+            konsave -i "$file" -f || echo "Warning: Failed to import konsave profile $profile_name." >&2
+        fi
+    done
+}
+
 print_summary() {
     echo "=== Recovery Summary ==="
     echo "Official: installed=${official_installed}, skipped=${official_skipped}, failed=${official_failed}"
@@ -361,5 +386,6 @@ clone_or_pull
 install_official
 install_foreign
 restore_dotfiles
+restore_konsave
 restore_extras
 print_summary

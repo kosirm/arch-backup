@@ -1,11 +1,11 @@
 # Maintainer: Milan <your-email@example.com>
 pkgname=arch-backup-tool-git
-_pkgname=cachyos-package-backup
+_pkgname=arch-backup
 pkgver=1.0.0.r0.g1234567
 pkgrel=1
 pkgdesc="PyQt6 GUI and CLI package baseline/dotfile tracking and recovery tool for Arch Linux & CachyOS"
 arch=('any')
-url="https://github.com/milan/cachyos-package-backup"
+url="https://github.com/kosirm/arch-backup"
 license=('MIT')
 depends=('python' 'python-pyqt6' 'git' 'pacman' 'chezmoi')
 makedepends=('git')
@@ -26,7 +26,6 @@ pkgver() {
 package() {
   cd "${srcdir}/${_pkgname}"
   
-  # Run installer under fakeroot using DESTDIR
-  # This places all files in the relative package tree (/usr/local/bin, /usr/local/share, etc.)
-  DESTDIR="${pkgdir}" ./install.sh
+  # Run installer under fakeroot using DESTDIR and PREFIX=/usr
+  PREFIX=/usr DESTDIR="${pkgdir}" ./install.sh
 }

@@ -5,9 +5,9 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, 
     QLineEdit, QListWidget, QListWidgetItem, QFileDialog, 
     QMessageBox, QTextBrowser, QTabWidget, QSplitter, QCheckBox,
-    QComboBox
+    QComboBox, QTimeEdit
 )
-from PyQt6.QtCore import pyqtSignal, Qt, QProcess
+from PyQt6.QtCore import pyqtSignal, Qt, QProcess, QTime
 from PyQt6.QtGui import QFont, QColor
 
 from .utils import load_gui_config, save_gui_config, resolve_script_path, CONFIG_PATH
@@ -87,7 +87,7 @@ class AppsTab(QWidget):
 
         self.update_btn = QPushButton("Update Backup")
         self.update_btn.setObjectName("primaryBtn")
-        self.update_btn.setVisible(False)
+        self.update_btn.setEnabled(False)
         self.update_btn.clicked.connect(self.apply_changes)
         header.addWidget(self.update_btn)
 
@@ -169,7 +169,7 @@ class AppsTab(QWidget):
             return
 
         self.sort_and_rebuild_list()
-        self.update_btn.setVisible(False)
+        self.update_btn.setEnabled(False)
 
     def update_count_label(self):
         checked_count = len(self.current_checked)
@@ -248,7 +248,7 @@ class AppsTab(QWidget):
 
         # Check if changes differ from original checked list
         has_changed = self.current_checked != self.original_checked
-        self.update_btn.setVisible(has_changed)
+        self.update_btn.setEnabled(has_changed)
         self.update_count_label()
 
     def apply_changes(self):
@@ -296,7 +296,7 @@ class AppsTab(QWidget):
 
             # Reset baseline comparison baseline
             self.original_checked = set(self.current_checked)
-            self.update_btn.setVisible(False)
+            self.update_btn.setEnabled(False)
             
             # Emit signal to request backup run in parent dashboard
             self.run_backup_requested.emit(config)
@@ -464,9 +464,11 @@ class SettingsTab(QWidget):
     status_message = pyqtSignal(str)
     reset_requested = pyqtSignal()
     run_action_requested = pyqtSignal(list, str) # Emits cmd args, and action description label
+    integrations_changed = pyqtSignal()
 
     def __init__(self):
         super().__init__()
+        self.proc = None
         self.init_ui()
 
     def init_ui(self):
@@ -499,6 +501,67 @@ class SettingsTab(QWidget):
         remote_layout.addWidget(save_remote_btn)
         layout.addWidget(remote_box)
 
+        # Package & Config Integrations
+        integrations_title = QLabel("Package & Config Integrations")
+        integrations_title.setObjectName("subSectionTitle")
+        layout.addWidget(integrations_title)
+
+        integrations_box = QWidget()
+        integrations_layout = QVBoxLayout(integrations_box)
+        integrations_layout.setContentsMargins(0, 0, 0, 0)
+        integrations_layout.setSpacing(10)
+
+        # Chezmoi check
+        chezmoi_row = QHBoxLayout()
+        self.use_chezmoi = QCheckBox("Use Chezmoi (Dotfiles Tracking)")
+        self.use_chezmoi.stateChanged.connect(self.on_integration_changed)
+        chezmoi_row.addWidget(self.use_chezmoi)
+
+        self.install_chezmoi_btn = QPushButton("Install Chezmoi")
+        self.install_chezmoi_btn.setObjectName("smallActionBtn")
+        self.install_chezmoi_btn.clicked.connect(lambda: self.install_dependency("chezmoi", self.install_chezmoi_btn, self.use_chezmoi))
+        chezmoi_row.addWidget(self.install_chezmoi_btn)
+        integrations_layout.addLayout(chezmoi_row)
+
+        # Konsave check
+        konsave_row = QHBoxLayout()
+        self.use_konsave = QCheckBox("Use Konsave (KDE Plasma Configurations)")
+        self.use_konsave.stateChanged.connect(self.on_integration_changed)
+        konsave_row.addWidget(self.use_konsave)
+
+        self.install_konsave_btn = QPushButton("Install Konsave")
+        self.install_konsave_btn.setObjectName("smallActionBtn")
+        self.install_konsave_btn.clicked.connect(lambda: self.install_dependency("konsave", self.install_konsave_btn, self.use_konsave))
+        konsave_row.addWidget(self.install_konsave_btn)
+        integrations_layout.addLayout(konsave_row)
+
+        layout.addWidget(integrations_box)
+
+        # Backup Schedule Section
+        schedule_title = QLabel("Backup Schedule")
+        schedule_title.setObjectName("subSectionTitle")
+        layout.addWidget(schedule_title)
+
+        schedule_box = QWidget()
+        schedule_layout = QHBoxLayout(schedule_box)
+        schedule_layout.setContentsMargins(0, 0, 0, 0)
+        schedule_layout.setSpacing(10)
+
+        schedule_label = QLabel("Daily Backup Time:")
+        self.time_edit = QTimeEdit()
+        self.time_edit.setDisplayFormat("HH:mm")
+        self.time_edit.setObjectName("formInput")
+        
+        save_schedule_btn = QPushButton("Save Schedule")
+        save_schedule_btn.setObjectName("secondaryBtn")
+        save_schedule_btn.clicked.connect(self.save_schedule)
+
+        schedule_layout.addWidget(schedule_label)
+        schedule_layout.addWidget(self.time_edit)
+        schedule_layout.addWidget(save_schedule_btn)
+        schedule_layout.addStretch()
+        layout.addWidget(schedule_box)
+
         layout.addSpacing(10)
 
         # Action Buttons
@@ -511,6 +574,12 @@ class SettingsTab(QWidget):
         self.baseline_btn.setObjectName("settingsActionBtn")
         self.baseline_btn.clicked.connect(self.regenerate_baseline)
         layout.addWidget(self.baseline_btn)
+
+        # Force Daily Backup Button
+        self.run_extras_btn = QPushButton("Execute Daily Backup Routine Instantly")
+        self.run_extras_btn.setObjectName("settingsActionBtn")
+        self.run_extras_btn.clicked.connect(self.run_daily_backup_now)
+        layout.addWidget(self.run_extras_btn)
 
         layout.addStretch()
 
@@ -527,6 +596,130 @@ class SettingsTab(QWidget):
     def load_settings(self):
         config = load_gui_config()
         self.remote_input.setText(config.get("GITHUB_REMOTE", ""))
+
+        # Chezmoi check and load
+        self.use_chezmoi.blockSignals(True)
+        chezmoi_installed = shutil.which("chezmoi") is not None
+        self.install_chezmoi_btn.setVisible(not chezmoi_installed)
+        self.use_chezmoi.setEnabled(chezmoi_installed)
+        if chezmoi_installed:
+            use_chezmoi_val = config.get("USE_CHEZMOI", "true") == "true"
+            self.use_chezmoi.setChecked(use_chezmoi_val)
+        else:
+            self.use_chezmoi.setChecked(False)
+        self.use_chezmoi.blockSignals(False)
+
+        # Konsave check and load
+        self.use_konsave.blockSignals(True)
+        konsave_installed = shutil.which("konsave") is not None
+        self.install_konsave_btn.setVisible(not konsave_installed)
+        self.use_konsave.setEnabled(konsave_installed)
+        if konsave_installed:
+            use_konsave_val = config.get("USE_KONSAVE", "true") == "true"
+            self.use_konsave.setChecked(use_konsave_val)
+        else:
+            self.use_konsave.setChecked(False)
+        self.use_konsave.blockSignals(False)
+
+        # Load schedule time
+        interval = config.get("TIMER_INTERVAL", "daily")
+        if ":" in interval:
+            try:
+                h, m = map(int, interval.split(":"))
+                self.time_edit.setTime(QTime(h, m))
+            except Exception:
+                self.time_edit.setTime(QTime(0, 0))
+        else:
+            self.time_edit.setTime(QTime(0, 0))
+
+    def save_schedule(self):
+        time_str = self.time_edit.time().toString("HH:mm")
+        config = load_gui_config()
+        config["TIMER_INTERVAL"] = time_str
+        if save_gui_config(config):
+            # Sync user systemd timer
+            from .utils import sync_user_systemd_timer
+            if sync_user_systemd_timer(time_str):
+                self.status_message.emit(f"Saved schedule ({time_str}) and successfully configured systemd user timer.")
+            else:
+                self.status_message.emit(f"Saved schedule ({time_str}) locally, but failed to write systemd user timer.")
+        else:
+            QMessageBox.critical(self, "Error", "Failed to update configuration.")
+
+    def run_daily_backup_now(self):
+        reply = QMessageBox.question(
+            self, "Execute Daily Backup Routine",
+            "This will trigger the daily background backup routine (Flatpak, Pip, Cargo, NPM packages, and KDE Plasma settings) instantly inside the progress console.\n\nAre you sure you want to proceed?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            cmd = [resolve_script_path("cachyos-backup"), "--extras"]
+            self.run_action_requested.emit(cmd, "Executing Daily Backup Routine")
+
+    def on_integration_changed(self):
+        config = load_gui_config()
+        config["USE_CHEZMOI"] = "true" if self.use_chezmoi.isChecked() else "false"
+        config["USE_KONSAVE"] = "true" if self.use_konsave.isChecked() else "false"
+        if save_gui_config(config):
+            self.status_message.emit("Updated package and configuration integrations.")
+            self.integrations_changed.emit()
+        else:
+            QMessageBox.critical(self, "Error", "Failed to save configuration settings.")
+
+    def get_terminal_command(self, cmd_list):
+        for term in ["konsole", "gnome-terminal", "xfce4-terminal", "alacritty", "kitty"]:
+            path = shutil.which(term)
+            if path:
+                if term == "konsole":
+                    return [path, "-e"] + cmd_list
+                elif term == "kitty":
+                    return [path] + cmd_list
+                elif term == "xfce4-terminal":
+                    return [path, "-e", " ".join(cmd_list)]
+                elif term == "alacritty":
+                    return [path, "-e"] + cmd_list
+                elif term == "gnome-terminal":
+                    return [path, "--"] + cmd_list
+        return None
+
+    def install_dependency(self, package, button, checkbox):
+        button.setEnabled(False)
+        button.setText("Installing...")
+        self.proc = QProcess()
+        
+        if package == "chezmoi":
+            cmd = ["pkexec", "pacman", "-S", "--needed", "--noconfirm", "chezmoi"]
+        else:
+            helper = None
+            if shutil.which("yay"):
+                helper = "yay"
+            elif shutil.which("paru"):
+                helper = "paru"
+                
+            if helper:
+                cmd_list = [helper, "-S", "--needed", "--noconfirm", package]
+                terminal_cmd = self.get_terminal_command(cmd_list)
+                if terminal_cmd:
+                    cmd = terminal_cmd
+                else:
+                    cmd = cmd_list
+            else:
+                cmd = ["pkexec", "pacman", "-S", "--needed", "--noconfirm", package]
+
+        self.proc.start(cmd[0], cmd[1:])
+        self.proc.finished.connect(lambda exit_code, status: self.on_install_finished(exit_code, package, button, checkbox))
+
+    def on_install_finished(self, exit_code, package, button, checkbox):
+        if shutil.which(package) is not None:
+            button.setVisible(False)
+            checkbox.setEnabled(True)
+            checkbox.setChecked(True)
+            QMessageBox.information(self, "Success", f"Successfully installed {package}!")
+            self.on_integration_changed()
+        else:
+            button.setEnabled(True)
+            button.setText(f"Install {package}")
+            QMessageBox.warning(self, "Failure", f"Failed to install {package}. Please install it manually.")
 
     def save_remote_url(self):
         new_url = self.remote_input.text().strip()
@@ -640,6 +833,7 @@ class DashboardWidget(QTabWidget):
         self.settings_tab.status_message.connect(self.status_message.emit)
         self.settings_tab.reset_requested.connect(self.reset_requested.emit)
         self.settings_tab.run_action_requested.connect(self.run_action_requested.emit)
+        self.settings_tab.integrations_changed.connect(self.update_tabs_visibility)
         self.addTab(self.settings_tab, "⚙️ Settings")
 
         self.about_tab = AboutTab()
@@ -648,20 +842,36 @@ class DashboardWidget(QTabWidget):
         # Load data on tab change to keep everything synced
         self.currentChanged.connect(self.on_tab_changed)
 
+    def update_tabs_visibility(self):
+        config = load_gui_config()
+        use_chezmoi = config.get("USE_CHEZMOI", "true") == "true"
+        
+        index = self.indexOf(self.chezmoi_tab)
+        if use_chezmoi:
+            if index == -1:
+                # Insert right after "Installed Packages" (index 0)
+                self.insertTab(1, self.chezmoi_tab, "🔧 Config Dotfiles")
+        else:
+            if index != -1:
+                self.removeTab(index)
+
     def load_dashboard_data(self):
+        self.update_tabs_visibility()
         self.apps_tab.load_packages()
-        self.chezmoi_tab.load_dotfiles()
+        if self.indexOf(self.chezmoi_tab) != -1:
+            self.chezmoi_tab.load_dotfiles()
         self.settings_tab.load_settings()
         self.about_tab.load_readme()
 
     def on_tab_changed(self, index):
-        if index == 0:
+        widget = self.widget(index)
+        if widget == self.apps_tab:
             self.apps_tab.load_packages()
-        elif index == 1:
+        elif widget == self.chezmoi_tab:
             self.chezmoi_tab.load_dotfiles()
-        elif index == 2:
+        elif widget == self.settings_tab:
             self.settings_tab.load_settings()
-        elif index == 3:
+        elif widget == self.about_tab:
             self.about_tab.load_readme()
 
     def run_backup(self, config):

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# CachyOS Package Backup Tool
+# Arch Package Backup Tool
 set -euo pipefail
 
 # Configuration file path
@@ -224,6 +224,12 @@ DOTFILES_CHANGED="unchanged"
 EXTRAS_TRACKED="unchanged"
 
 sync_dotfiles() {
+    if [ "${USE_CHEZMOI:-true}" = "false" ] || [ "${USE_CHEZMOI:-true}" = "no" ]; then
+        log_info "Chezmoi is disabled in config. Skipping dotfile tracking."
+        DOTFILES_CHANGED="skipped"
+        return 0
+    fi
+
     if ! command -v chezmoi >/dev/null 2>&1; then
         log_warn "chezmoi is not installed. Skipping dotfile tracking."
         DOTFILES_CHANGED="skipped"
@@ -241,6 +247,88 @@ sync_dotfiles() {
     
     log_info "Re-adding tracked files to chezmoi..."
     chezmoi re-add || log_warn "chezmoi re-add returned non-zero status"
+
+    local chezmoi_src="${HOME}/.local/share/chezmoi"
+    if [ -d "$chezmoi_src" ]; then
+        log_info "Copying chezmoi source files to backup repository..."
+        if command -v rsync >/dev/null 2>&1; then
+            rsync -a --exclude '.git' "$chezmoi_src/" "$BACKUP_REPO/"
+        else
+            mkdir -p "$BACKUP_REPO"
+            cp -R "$chezmoi_src"/. "$BACKUP_REPO/"
+            rm -rf "$BACKUP_REPO/.git" 2>/dev/null || true
+        fi
+        DOTFILES_CHANGED="changed"
+    fi
+
+    local chezmoiignore="${BACKUP_REPO}/.chezmoiignore"
+    if [ ! -f "$chezmoiignore" ]; then
+        log_info "Creating .chezmoiignore in backup repository..."
+        cat <<EOF > "$chezmoiignore"
+# Ignore package backup lists and configuration files
+baseline-official.txt
+baseline-foreign.txt
+user-official.txt
+user-foreign.txt
+flatpak-packages.txt
+pip-packages.txt
+cargo-packages.txt
+npm-packages.txt
+config
+.cachyos-kde-profile.hash
+EOF
+    fi
+}
+
+sync_konsave() {
+    if [ "${USE_KONSAVE:-true}" = "false" ] || [ "${USE_KONSAVE:-true}" = "no" ]; then
+        log_info "Konsave is disabled in config. Skipping KDE Plasma settings backup."
+        return 0
+    fi
+
+    if ! command -v konsave >/dev/null 2>&1; then
+        log_warn "konsave is not installed. Skipping KDE Plasma settings backup."
+        return 0
+    fi
+
+    log_info "Backing up KDE Plasma settings via Konsave..."
+    
+    # Save current active configuration to a standard profile
+    log_info "Capturing current KDE Plasma settings..."
+    if ! konsave -s "cachyos-kde-profile" -f >/dev/null 2>&1; then
+        log_warn "Failed to capture current KDE Plasma settings"
+        return 0
+    fi
+
+    # Calculate combined hash of the saved profile directory
+    local profile_dir="${HOME}/.config/konsave/profiles/cachyos-kde-profile"
+    if [ ! -d "$profile_dir" ]; then
+        profile_dir="${HOME}/.local/share/konsave/profiles/cachyos-kde-profile"
+    fi
+
+    if [ -d "$profile_dir" ]; then
+        local current_hash
+        current_hash=$(find "$profile_dir" -type f -exec md5sum {} + 2>/dev/null | sort | md5sum | awk '{print $1}')
+        
+        local hash_file="${BACKUP_REPO}/.cachyos-kde-profile.hash"
+        local prev_hash=""
+        [ -f "$hash_file" ] && prev_hash=$(cat "$hash_file")
+        
+        if [ "$current_hash" != "$prev_hash" ]; then
+            log_info "KDE Plasma configuration changes detected. Exporting Konsave profile..."
+            rm -f "$BACKUP_REPO/cachyos-kde-profile.knsv"
+            if konsave -e "cachyos-kde-profile" -d "$BACKUP_REPO" >/dev/null 2>&1; then
+                echo "$current_hash" > "$hash_file"
+                log_info "Successfully exported and updated KDE Plasma settings backup."
+            else
+                log_warn "Failed to export Konsave profile: cachyos-kde-profile"
+            fi
+        else
+            log_info "KDE Plasma settings are unchanged. Skipping backup export."
+        fi
+    else
+        log_warn "Konsave profile directory not found at $profile_dir"
+    fi
 }
 
 track_extras() {
@@ -291,59 +379,56 @@ git_commit_push() {
     
     local git_status
     git_status=$(git -C "$BACKUP_REPO" status --porcelain)
-    if [ -z "$git_status" ]; then
-        log_info "No changes detected in backup repository. Skipping commit and push."
-        return 0
-    fi
     
-    git -C "$BACKUP_REPO" add -A
-    
-    local added_official=0
-    local removed_official=0
-    local added_foreign=0
-    local removed_foreign=0
-    
-    if git -C "$BACKUP_REPO" diff --cached --quiet user-official.txt; then
-        true
-    else
-        added_official=$(git -C "$BACKUP_REPO" diff --cached user-official.txt | grep -E '^\+[^+]' | wc -l || true)
-        removed_official=$(git -C "$BACKUP_REPO" diff --cached user-official.txt | grep -E '^-[^-]' | wc -l || true)
-    fi
-    
-    if git -C "$BACKUP_REPO" diff --cached --quiet user-foreign.txt; then
-        true
-    else
-        added_foreign=$(git -C "$BACKUP_REPO" diff --cached user-foreign.txt | grep -E '^\+[^+]' | wc -l || true)
-        removed_foreign=$(git -C "$BACKUP_REPO" diff --cached user-foreign.txt | grep -E '^-[^-]' | wc -l || true)
-    fi
-    
-    local timestamp
-    timestamp=$(date +"%Y-%m-%d %H:%M:%S")
-    
-    local total_added=$((added_official + added_foreign))
-    local total_removed=$((removed_official + removed_foreign))
-    local summary=""
-    if [ "$total_added" -eq 0 ] && [ "$total_removed" -eq 0 ]; then
-        if [ "$DOTFILES_CHANGED" = "changed" ]; then
-            summary="dotfiles updated"
-        elif [ "$EXTRAS_TRACKED" != "unchanged" ]; then
-            summary="extras updated ($EXTRAS_TRACKED)"
+    if [ -n "$git_status" ]; then
+        git -C "$BACKUP_REPO" add -A
+        
+        local added_official=0
+        local removed_official=0
+        local added_foreign=0
+        local removed_foreign=0
+        
+        if git -C "$BACKUP_REPO" diff --cached --quiet user-official.txt; then
+            true
         else
-            summary="files updated"
+            added_official=$(git -C "$BACKUP_REPO" diff --cached user-official.txt | grep -E '^\+[^+]' | wc -l || true)
+            removed_official=$(git -C "$BACKUP_REPO" diff --cached user-official.txt | grep -E '^-[^-]' | wc -l || true)
         fi
-    else
-        summary=""
-        if [ "$total_added" -gt 0 ]; then
-            summary+="$total_added package(s) added"
+        
+        if git -C "$BACKUP_REPO" diff --cached --quiet user-foreign.txt; then
+            true
+        else
+            added_foreign=$(git -C "$BACKUP_REPO" diff --cached user-foreign.txt | grep -E '^\+[^+]' | wc -l || true)
+            removed_foreign=$(git -C "$BACKUP_REPO" diff --cached user-foreign.txt | grep -E '^-[^-]' | wc -l || true)
         fi
-        if [ "$total_removed" -gt 0 ]; then
-            if [ -n "$summary" ]; then summary+=", "; fi
-            summary+="$total_removed package(s) removed"
+        
+        local timestamp
+        timestamp=$(date +"%Y-%m-%d %H:%M:%S")
+        
+        local total_added=$((added_official + added_foreign))
+        local total_removed=$((removed_official + removed_foreign))
+        local summary=""
+        if [ "$total_added" -eq 0 ] && [ "$total_removed" -eq 0 ]; then
+            if [ "$DOTFILES_CHANGED" = "changed" ]; then
+                summary="dotfiles updated"
+            elif [ "$EXTRAS_TRACKED" != "unchanged" ]; then
+                summary="extras updated ($EXTRAS_TRACKED)"
+            else
+                summary="files updated"
+            fi
+        else
+            summary=""
+            if [ "$total_added" -gt 0 ]; then
+                summary+="$total_added package(s) added"
+            fi
+            if [ "$total_removed" -gt 0 ]; then
+                if [ -n "$summary" ]; then summary+=", "; fi
+                summary+="$total_removed package(s) removed"
+            fi
         fi
-    fi
-    
-    local commit_msg
-    commit_msg=$(cat <<EOF
+        
+        local commit_msg
+        commit_msg=$(cat <<EOF
 backup: $summary ($timestamp)
 
 Packages: +$added_official -$removed_official official, +$added_foreign -$removed_foreign foreign
@@ -352,16 +437,30 @@ Extras: $EXTRAS_TRACKED
 EOF
 )
 
-    log_info "Committing changes..."
-    git -C "$BACKUP_REPO" commit -m "$commit_msg"
+        log_info "Committing changes..."
+        git -C "$BACKUP_REPO" commit -m "$commit_msg"
+    else
+        log_info "No changes detected in backup repository working tree."
+    fi
     
     if [ -n "${GITHUB_REMOTE:-}" ]; then
-        log_info "Pushing changes to remote: $GITHUB_REMOTE..."
-        local push_err
-        # Redirect stderr to stdout to capture push error
-        if ! push_err=$(git -C "$BACKUP_REPO" push "$GITHUB_REMOTE" HEAD 2>&1); then
-            log_error "Git push failed: $push_err"
-            exit 1
+        if git -C "$BACKUP_REPO" rev-parse HEAD >/dev/null 2>&1; then
+            # Ensure remote 'origin' is set to GITHUB_REMOTE
+            if git -C "$BACKUP_REPO" remote | grep -q "^origin$"; then
+                git -C "$BACKUP_REPO" remote set-url origin "$GITHUB_REMOTE"
+            else
+                git -C "$BACKUP_REPO" remote add origin "$GITHUB_REMOTE"
+            fi
+            
+            log_info "Pushing changes to remote origin ($GITHUB_REMOTE)..."
+            local push_err
+            # Redirect stderr to stdout to capture push error
+            if ! push_err=$(git -C "$BACKUP_REPO" push origin HEAD 2>&1); then
+                log_error "Git push failed: $push_err"
+                exit 1
+            fi
+        else
+            log_info "No commits in repository yet. Skipping push."
         fi
     else
         log_warn "GITHUB_REMOTE is not configured. Skipping remote push."
@@ -432,7 +531,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
             capture_baseline
             ;;
         backup)
-            log_info "CachyOS Package Backup: Starting backup..."
+            log_info "Arch Package Backup: Starting backup..."
             load_config
             validate_config
             compute_diff
@@ -446,15 +545,16 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
             if [ -f "${BACKUP_REPO}/user-foreign.txt" ]; then
                 foreign_count=$(grep -c '^' "${BACKUP_REPO}/user-foreign.txt" || true)
             fi
-            log_info "CachyOS Package Backup: Completed. Tracked official: $official_count, foreign: $foreign_count. Git push succeeded."
+            log_info "Arch Package Backup: Completed. Tracked official: $official_count, foreign: $foreign_count. Git push succeeded."
             ;;
         extras)
-            log_info "CachyOS Package Backup: Starting extras backup..."
+            log_info "Arch Package Backup: Starting extras backup..."
             load_config
             validate_config
             track_extras
+            sync_konsave
             git_commit_push
-            log_info "CachyOS Package Backup: Extras backup completed. Managers tracked: $EXTRAS_TRACKED. Git push succeeded."
+            log_info "Arch Package Backup: Extras backup completed. Managers tracked: $EXTRAS_TRACKED. Git push succeeded."
             ;;
         help|"")
             show_help

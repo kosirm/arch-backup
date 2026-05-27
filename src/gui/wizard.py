@@ -501,6 +501,8 @@ class ProgressConsole(QWidget):
             "GITHUB_REMOTE": git_url,
             "AUR_HELPER": "yay" if shutil.which("yay") else ("paru" if shutil.which("paru") else "yay"),
             "CHEZMOI_SOURCE": "",
+            "USE_CHEZMOI": "true" if data["use_chezmoi"] else "false",
+            "USE_KONSAVE": "true" if data["use_konsave"] else "false",
             "EXTRAS_ENABLED": "flatpak pip cargo npm" if data["use_extras"] else "",
             "TIMER_INTERVAL": "daily"
         }
@@ -568,6 +570,8 @@ class ProgressConsole(QWidget):
                 "GITHUB_REMOTE": final_remote,
                 "AUR_HELPER": helper if helper else "yay",
                 "CHEZMOI_SOURCE": "",
+                "USE_CHEZMOI": "false" if data["skip_chezmoi"] else "true",
+                "USE_KONSAVE": "true" if shutil.which("konsave") is not None else "false",
                 "EXTRAS_ENABLED": "flatpak pip cargo npm" if not data["skip_extras"] else "",
                 "TIMER_INTERVAL": "daily"
             }

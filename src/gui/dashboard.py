@@ -72,10 +72,6 @@ class AppsTab(QWidget):
         self.search_input.textChanged.connect(self.filter_packages)
         header.addWidget(self.search_input)
 
-        self.hide_preinstalled_cb = QCheckBox("Hide Preinstalled")
-        self.hide_preinstalled_cb.stateChanged.connect(self.filter_packages)
-        header.addWidget(self.hide_preinstalled_cb)
-
         self.checked_only_cb = QCheckBox("Checked Only")
         self.checked_only_cb.stateChanged.connect(self.filter_packages)
         header.addWidget(self.checked_only_cb)
@@ -209,7 +205,6 @@ class AppsTab(QWidget):
 
     def filter_packages(self):
         query = self.search_input.text().strip().lower()
-        hide_preinstalled = self.hide_preinstalled_cb.isChecked()
         checked_only = self.checked_only_cb.isChecked()
 
         self.list_widget.blockSignals(True)
@@ -220,13 +215,10 @@ class AppsTab(QWidget):
             pkg, _ = item.data(Qt.ItemDataRole.UserRole)
             
             matches_query = query in pkg.lower()
-            is_preinstalled = pkg in self.baseline_packages
-            matches_preinstalled = not (hide_preinstalled and is_preinstalled)
-            
             is_checked = pkg in self.current_checked
             matches_checked_only = not (checked_only and not is_checked)
             
-            if matches_query and matches_preinstalled and matches_checked_only:
+            if matches_query and matches_checked_only:
                 item.setHidden(False)
                 visible_count += 1
             else:

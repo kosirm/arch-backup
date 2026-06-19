@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Package Backup Tool
+# Arch Package Backup Tool
 set -euo pipefail
 
 # Configuration file path
@@ -382,7 +382,7 @@ track_extras() {
     fi
 }
 
-git_commit_push() {
+git_commit() {
     if [ ! -d "${BACKUP_REPO}/.git" ]; then
         echo "Error: $BACKUP_REPO is not initialized as a git repository." >&2
         echo "Please run 'git init' inside $BACKUP_REPO and configure a remote repository." >&2
@@ -454,29 +454,38 @@ EOF
     else
         log_info "No changes detected in backup repository working tree."
     fi
-    
-    if [ -n "${GITHUB_REMOTE:-}" ]; then
-        if git -C "$BACKUP_REPO" rev-parse HEAD >/dev/null 2>&1; then
-            # Ensure remote 'origin' is set to GITHUB_REMOTE
-            if git -C "$BACKUP_REPO" remote | grep -q "^origin$"; then
-                git -C "$BACKUP_REPO" remote set-url origin "$GITHUB_REMOTE"
-            else
-                git -C "$BACKUP_REPO" remote add origin "$GITHUB_REMOTE"
-            fi
-            
-            log_info "Pushing changes to remote origin ($GITHUB_REMOTE)..."
-            local push_err
-            # Redirect stderr to stdout to capture push error
-            if ! push_err=$(git -C "$BACKUP_REPO" push origin HEAD 2>&1); then
-                log_error "Git push failed: $push_err"
-                exit 1
-            fi
-        else
-            log_info "No commits in repository yet. Skipping push."
-        fi
-    else
-        log_warn "GITHUB_REMOTE is not configured. Skipping remote push."
+}
+
+git_push() {
+    if [ ! -d "${BACKUP_REPO}/.git" ]; then
+        echo "Error: $BACKUP_REPO is not initialized as a git repository." >&2
+        exit 1
     fi
+
+    if [ -z "${GITHUB_REMOTE:-}" ]; then
+        log_warn "GITHUB_REMOTE is not configured. Skipping remote push."
+        return 0
+    fi
+
+    if ! git -C "$BACKUP_REPO" rev-parse HEAD >/dev/null 2>&1; then
+        log_info "No commits in repository yet. Skipping push."
+        return 0
+    fi
+
+    # Ensure remote 'origin' is set to GITHUB_REMOTE
+    if git -C "$BACKUP_REPO" remote | grep -q "^origin$"; then
+        git -C "$BACKUP_REPO" remote set-url origin "$GITHUB_REMOTE"
+    else
+        git -C "$BACKUP_REPO" remote add origin "$GITHUB_REMOTE"
+    fi
+
+    log_info "Pushing changes to remote origin ($GITHUB_REMOTE)..."
+    local push_err
+    if ! push_err=$(git -C "$BACKUP_REPO" push origin HEAD 2>&1); then
+        log_error "Git push failed: $push_err"
+        exit 1
+    fi
+    log_info "Git push succeeded."
 }
 
 show_help() {
@@ -486,8 +495,9 @@ Usage: cachyos-backup [OPTIONS]
 Options:
   --init        Create config file with defaults, prompt for customization
   --baseline    Capture baseline snapshot of current packages
-  --backup      Run full package diff + chezmoi + git push
-  --extras      Run non-pacman package manager tracking + git push
+  --backup      Run full package diff + chezmoi + local git commit
+  --push        Push pending commits to configured GitHub remote
+  --extras      Run non-pacman package manager tracking + local git commit
   --verbose     Print detailed output to stdout in addition to journal logging
   --help        Print usage information
 EOF
@@ -511,6 +521,9 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
                 ;;
             --backup)
                 action="backup"
+                ;;
+            --push)
+                action="push"
                 ;;
             --extras)
                 action="extras"
@@ -548,7 +561,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
             validate_config
             compute_diff
             sync_dotfiles
-            git_commit_push
+            git_commit
             official_count=0
             foreign_count=0
             if [ -f "${BACKUP_REPO}/user-official.txt" ]; then
@@ -557,7 +570,13 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
             if [ -f "${BACKUP_REPO}/user-foreign.txt" ]; then
                 foreign_count=$(grep -c '^' "${BACKUP_REPO}/user-foreign.txt" || true)
             fi
-            log_info "Package Backup: Completed. Tracked official: $official_count, foreign: $foreign_count. Git push succeeded."
+            log_info "Package Backup: Completed. Tracked official: $official_count, foreign: $foreign_count. Local commit done."
+            ;;
+        push)
+            log_info "Package Backup: Pushing to remote..."
+            load_config
+            validate_config
+            git_push
             ;;
         extras)
             log_info "Package Backup: Starting extras backup..."
@@ -565,8 +584,8 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
             validate_config
             track_extras
             sync_konsave
-            git_commit_push
-            log_info "Package Backup: Extras backup completed. Managers tracked: $EXTRAS_TRACKED. Git push succeeded."
+            git_commit
+            log_info "Package Backup: Extras backup completed. Managers tracked: $EXTRAS_TRACKED. Local commit done."
             ;;
         help|"")
             show_help

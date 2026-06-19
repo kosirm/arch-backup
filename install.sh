@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Installation script for Package Backup and Recovery System
+# Installation script for Arch Package Backup and Recovery System
 set -euo pipefail
 
 DESTDIR="${DESTDIR:-}"
@@ -32,7 +32,6 @@ fi
 # 3. Create necessary directories
 mkdir -p "$DESTDIR$PREFIX/bin"
 mkdir -p "$DESTDIR$PREFIX/share/arch-backup-tool/gui"
-mkdir -p "$DESTDIR$PREFIX/share/applications"
 mkdir -p "$DESTDIR/etc/pacman.d/hooks"
 
 # Determine systemd unit folder based on prefix
@@ -61,7 +60,8 @@ cp src/gui/dashboard.py "$DESTDIR$PREFIX/share/arch-backup-tool/gui/dashboard.py
 cp src/gui/utils.py "$DESTDIR$PREFIX/share/arch-backup-tool/gui/utils.py"
 chmod 644 "$DESTDIR$PREFIX/share/arch-backup-tool/gui/"*.py
 
-echo "Installing Desktop entry launcher..."
+echo "Installing desktop entry..."
+mkdir -p "$DESTDIR$PREFIX/share/applications"
 cp config/arch-backup-tool.desktop "$DESTDIR$PREFIX/share/applications/arch-backup-tool.desktop"
 chmod 644 "$DESTDIR$PREFIX/share/applications/arch-backup-tool.desktop"
 
@@ -74,22 +74,34 @@ cp config/cachyos-backup-extras.timer "$SYSTEMD_DIR/cachyos-backup-extras.timer"
 chmod 644 "$SYSTEMD_DIR/cachyos-backup-extras.timer"
 
 if [ "$PREFIX" = "/usr" ]; then
-    # For user systemd unit, strip User=%I
     sed -e "s|/usr/local/bin|$PREFIX/bin|g" -e "/User=%I/d" config/cachyos-backup-extras.service > "$SYSTEMD_DIR/cachyos-backup-extras.service"
 else
     sed "s|/usr/local/bin|$PREFIX/bin|g" config/cachyos-backup-extras.service > "$SYSTEMD_DIR/cachyos-backup-extras.service"
 fi
 chmod 644 "$SYSTEMD_DIR/cachyos-backup-extras.service"
 
-# 5. Reload systemd and enable timer
+# Push service and timer (deferred git push, avoids pacman sandbox network block)
+cp config/cachyos-backup-push.timer "$SYSTEMD_DIR/cachyos-backup-push.timer"
+chmod 644 "$SYSTEMD_DIR/cachyos-backup-push.timer"
+
+if [ "$PREFIX" = "/usr" ]; then
+    sed -e "s|/usr/local/bin|$PREFIX/bin|g" config/cachyos-backup-push.service > "$SYSTEMD_DIR/cachyos-backup-push.service"
+else
+    sed "s|/usr/local/bin|$PREFIX/bin|g" config/cachyos-backup-push.service > "$SYSTEMD_DIR/cachyos-backup-push.service"
+fi
+chmod 644 "$SYSTEMD_DIR/cachyos-backup-push.service"
+
+# 5. Reload systemd and enable timers
 if [ -z "$DESTDIR" ]; then
-    echo "Enabling Systemd timer..."
+    echo "Enabling Systemd timers..."
     if [ "$PREFIX" = "/usr" ]; then
         systemctl --user daemon-reload
         systemctl --user enable --now cachyos-backup-extras.timer
+        systemctl --user enable --now cachyos-backup-push.timer
     else
         systemctl daemon-reload
         systemctl enable --now cachyos-backup-extras.timer
+        systemctl enable --now cachyos-backup-push.timer
     fi
 else
     echo "Skipping systemctl commands in DESTDIR mode."

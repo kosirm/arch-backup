@@ -1,0 +1,8 @@
+[Unit]
+Description=Push cachyos-backup commits to remote
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/cachyos-backup --push

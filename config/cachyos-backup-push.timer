@@ -1,0 +1,10 @@
+[Unit]
+Description=Push cachyos-backup commits to remote periodically
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=15min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

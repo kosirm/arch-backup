@@ -15,6 +15,7 @@ optdepends=(
 )
 provides=('arch-backup-tool' 'cachyos-backup' 'cachyos-recovery')
 conflicts=('arch-backup-tool' 'cachyos-backup' 'cachyos-recovery')
+install=arch-backup-tool-git.install
 source=("git+${url}.git")
 sha256sums=('SKIP')
 
